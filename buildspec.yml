@@ -1,0 +1,31 @@
+version: 0.2
+  
+phases:
+  install:
+    runtime-versions:
+      java: corretto11
+    commands:
+      - echo Entered the install phase...
+      - export JAVA_HOME=/usr/lib/jvm/java-11-amazon-corretto # workaround: hardcoded ENV variable for maven
+      - ./scripts/setup_k8s_build.sh
+    finally:
+      - echo "Checking versions of packages newly installed:"
+      - docker --version
+      - mvn --version
+      - java -version
+      - git version
+  build:
+    commands:
+      - echo Entered the build phase...
+      - echo Build started on `date`
+      - mvn spring-boot:build-image -Pk8s -DREPOSITORY_PREFIX=${REPOSITORY_PREFIX}
+      - echo Build completed on `date`
+  post_build:
+    on-failure: ABORT
+    commands:
+      - echo Entered the post_build phase...
+      - echo "Pushing the Docker image to DockerHub..."
+      - echo $DOCKER_CREDENTIALS > config.json
+      - export DOCKER_CONFIG=.
+      - docker push ${REPOSITORY_PREFIX}/spring-petclinic-cloud-visits-service:latest
+      - echo "Push the Docker image to DockerHub COMPLETED on `date`"

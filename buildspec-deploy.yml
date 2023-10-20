@@ -1,0 +1,80 @@
+version: 0.2
+
+env:
+  variables:
+    #ENVIRONMENT: dev # this has been commented because it is not set at the codebuild project level
+    REPOSITORY_PREFIX: michelnguyenfr
+    REPOSITORY_URI: michelnguyenfr/spring-petclinic-cloud-visits-service
+    TAG: latest
+    ARCH: amd64
+
+  parameter-store:
+    CLUSTER_NAME: PETCLINIC_EKS_CLUSTER_NAME
+    DOCKER_LOGIN: PETCLINIC_DOCKER_USERNAME
+    DOCKER_PASSWORD: PETCLINIC_DOCKER_PASSWORD
+    DOCKER_CREDENTIALS: DOCKER_CREDENTIALS
+    ACCESS_KEY_ID: ACCESS_KEY_ID
+    SECRET_ACCESS_KEY: SECRET_ACCESS_KEY
+    REGION: PETCLINIC_REGION
+
+phases:
+  install:
+    commands:
+      - echo Entered the install phase...
+      - export AWS_ACCESS_KEY_ID=$ACCESS_KEY_ID
+      - export AWS_SECRET_ACCESS_KEY=$SECRET_ACCESS_KEY
+      - export AWS_DEFAULT_REGION=$REGION
+      - export AWS_DEFAULT_OUTPUT="json"
+
+      - ./scripts/setup_k8s_tools.sh
+      
+    finally:
+      - echo "Checking versions of packages newly installed:"
+      # - kubectl version --output=json
+      - eksctl version
+      - helm version
+      - docker --version
+  pre_build:
+    commands:
+      - echo Install completed on `date`
+      
+      - echo Fetching Docker image
+      - echo $DOCKER_CREDENTIALS > docker_config.json
+      - echo $DOCKER_CONFIG > config.json
+      - export DOCKER_CONFIG=.
+      # - docker login -u $DOCKER_LOGIN -p $DOCKER_PASSWORD
+      - docker pull $REPOSITORY_URI:$TAG
+      - rm config.json
+      
+      - echo "Connecting to EKS cluster:" $CLUSTER_NAME
+      - aws eks update-kubeconfig --region $REGION --name $CLUSTER_NAME # connecting to the petclinic EKS cluster
+      
+      - echo "Checking if Kubernetes namespace exists (${ENVIRONMENT})"
+      - |
+        if kubectl get namespaces | grep $ENVIRONMENT; then
+          echo "Namespace ${ENVIRONMENT} exists."
+        else
+          echo "Namespace ${ENVIRONMENT} does not exist. Creating it..."
+          kubectl create namespace $ENVIRONMENT
+        fi
+  build:
+    commands:
+      - echo Entered the Deployment phase...
+      - echo Deployment started on `date`
+      - helm upgrade --install spring-visits-${ENVIRONMENT} charts/ --values charts/helm_values/values-${ENVIRONMENT}.yaml -n $ENVIRONMENT
+  
+  post_build:
+    commands:
+      - echo "Deployment to EKS COMPLETED on `date`"
+      - echo "If api-gateway is deployed, try this following URL':' http://$(kubectl get svc -n $ENVIRONMENT api-gateway | awk '{print $4}' |tail -n +2)"
+      - |
+        if kubectl get svc -n $ENVIRONMENT api-gateway; then
+          # Test from api-gateway to cibler microservice
+          # curl -I http://$(kubectl get svc -n $ENVIRONMENT api-gateway | awk '{print $4}' | tail -n +2)
+          echo "test on api-gateway"
+        else
+          # Insert your test on the microservice directly here
+          # For example:
+          # curl -I http://microservice-hostname:port
+          echo "Test on the microservice directly"
+        fi
